@@ -9,6 +9,8 @@
 # use tomasulo algorithm to simulate the execution of a program
 
 # define the parameters
+INPUT_FILE = "input1.txt"
+
 cycle_load = 2 
 cycle_store = 2 
 
@@ -34,93 +36,252 @@ class Instruction:
         self.dest = dest # destination register
         self.src1 = src1 # source register 1
         self.src2 = src2 # source register 2
-        self.issue = -1 # cycle number when the instruction is issued
+        self.issueTime = -1 # cycle number when the instruction is issued
         # the execute complished time is writeback time - 1
-        self.write = -1 # cycle number when the instruction is written back
+        self.writeTime = -1 # cycle number when the instruction is written back
     
+    def issue(self, cycle):
+        self.issueTime = cycle
+    
+    # 加减乘除和store的writetime在源寄存器值可知时才确定（写回或者发布时）
+    # load的writetime在issue时就能确定
+    def setWriteTime(self, cycle):
+        self.writeTime = cycle
 
 # define the register class
 class Register:
     def __init__(self, name):
         self.name = name # name of the register
-        self.value = "" # value of the register
+        self.value = name # value of the register
         self.busy = False # whether the register is being occupied 
         self.fu = "" # function unit that is writing the register
 
+    def occupy(self, fu):
+        self.busy = True
+        self.fu = fu
 
-# define the reservation station class
+    def write(self, value):
+        self.value = value
+
+    def free(self):
+        self.busy = False
+        self.fu = ""
+
+
 class Reservation:
     def __init__(self, name):
         self.name = name
         self.op = "" 
         self.time = 9999 # remaining time to complete the operation
         self.busy = False
-        self.qj = "" # name of the instruction that is writing to the source register 1
-        self.qk = "" # name of the instruction that is writing to the source register 2
-        self.vj = "" # value of the source register 1
-        self.vk = "" # value of the source register 2
-        self.dest = "" # destination register
+        self.fn1 = "" # name of the instruction that is writing to the source register 1
+        self.fn2 = "" # name of the instruction that is writing to the source register 2
+        self.src1 = "" # value of the source register 1
+        self.src2 = "" # value of the source register 2
         self.instruction = -1 # index of the instruction, so that we can set the time for it
+
+    def isAvaible(self):
+        return self.busy == False
+
+    def occupy(self, op, fn1, fn2, src1, src2, instruction):
+        self.op = op
+        self.busy = True
+        self.fn1 = fn1
+        self.fn2 = fn2
+        self.src1 = src1
+        self.src2 = src2
+        self.instruction = instruction
+
+    # only update the value of the source register
+    def write(self, fn, value):
+        if self.fn1 == fn:
+            self.src1 = value
+            self.fn1 = ""
+        if self.fn2 == fn:
+            self.src2 = value
+            self.fn2 = ""
+ 
 
     def free(self):
         self.op = ""
         self.time = 9999
         self.busy = False
-        self.qj = ""
-        self.qk = ""
-        self.vj = ""
-        self.vk = ""
-        self.dest = ""
+        self.src1 = ""
+        self.src2 = ""
+        self.fn1 = ""
+        self.fn2 = ""
         self.instruction = -1
 
-# define the load buffer class
-class LoadBuffer:
+    def execute(self):
+        if self.busy == True:
+            self.time -= 1
+
+    def isEnd(self):
+        if self.time == 0:
+            return True
+        else:
+            return False
+
+
+
+# define the reservation station class for ADD
+class ReservationADD(Reservation):
     def __init__(self, name):
-        self.name = name
-        self.busy = False
-        self.time = 9999 # remaining time to get the value from memory
-        self.address = "" # address of the memory location to be loaded
-        
-        # the address suppose to be:
-        # initially, address is the offset
-        # after calculated, the address is the real address
-        # However, in this program, we assume that the address is the real address
-        self.dest = "" # destination register
-        self.instruction = -1 # index of the instruction, so that we can set the time for it
+        super().__init__(name)
+        self.type = "ADD"
+
+    def occupy(self, op, fn1, fn2, src1, src2, instruction):
+        super().occupy(op, fn1, fn2, src1, src2, instruction)
+        if(fn1 == "" and fn2 == ""):
+            self.time = cycle_add
+
+    def write(self, fn, value):
+        super().write(fn, value)
+        if self.fn1 == "" and self.fn2 == "":
+            self.busy = False
+            self.op = ""
+            self.time = cycle_add
+            self.instruction = -1
+
+    def free(self):
+        super().free()
+
+    def execute(self):
+        super().execute()
+
+    def isEnd(self):
+        super().isEnd()
+
+    def getResult(self):
+        if(self.op == "ADDD"):
+            return self.src1 + "+" + self.src2
+        else:
+            return self.src1 + "-" + self.src2
+
+class ReservationMUL(Reservation):
+    def __init__(self, name):
+        super().__init__(name)
+        self.type = "MUL"
+
+    def occupy(self, op, fn1, fn2, src1, src2, instruction):
+        super().occupy(op, fn1, fn2, src1, src2, instruction)
+        if(fn1 == "" and fn2 == ""):
+            self.time = cycle_mul
+
+    def write(self, fn, value):
+        super().write(fn, value)
+        if self.fn1 == "" and self.fn2 == "":
+            self.busy = False
+            self.op = ""
+            self.time = cycle_mul
+            self.instruction = -1
+
+    def free(self):
+        super().free()
+
+    def execute(self):
+        super().execute()
+
+    def isEnd(self):
+        super().isEnd()
+
+    def getResult(self):
+        if(self.op == "MULTD"):
+            return self.src1 + "*" + self.src2
+        else:
+            return self.src1 + "/" + self.src2
+
+# define the load buffer class
+# fn1 and fn2 are not used
+# src1 is the memory address
+# src2 is not used
+# 每次load更新寄存器值，和reservation都是直接覆盖寄存器fn；
+# 不同在于load直接计时，不用等待源寄存器
+class LoadBuffer(Reservation):
+# load buffer to a register    
+    def __init__(self, name):
+        super().__init__(name)
+        self.type = "LOAD"
+
+    def occupy(self, src1, instruction):
+        super().occupy("LOAD", "", "", src1, "", instruction)
+        self.time = cycle_load
+
+    def getResult(self, index):
+        return "M" + str(index)
+
+
+    def execute(self):
+        return super().execute()
+    
+    def isEnd(self):
+        return super().isEnd()
+
+    def free(self):
+        return super().free()
 
 
 # define the store buffer class
-class StoreBuffer:
+# fn1 is used
+# fn2 is not used
+# src1 is the value of register
+# src2 is not used
+# add dest to store the memory address
+# 每次store获取源寄存器值时，和reservation都是从寄存器fn中获取（或者直接读取）；
+# 不同在于store没有目标寄存器，直接写入内存（在寄存器fn不会出现store）
+class StoreBuffer(Reservation):
     def __init__(self, name):
-        self.name = name
-        self.busy = False
-        self.time = 9999 # remaining time to store the value to memory
-        self.address = "" # address of the memory location to be stored
-        self.value = "" # value to be stored to memory
+        super().__init__(name)
+        self.type = "STORE"
+        self.dest = ""
+
+    def occupy(self, src, fn, dest, instruction):
+        self.dest = dest
+        super().occupy("STORE", fn, "", src, "", instruction)
+        if fn == "":
+            self.time = cycle_store
+
+    def execute(self):
+        return super().execute()
+    
+    def isEnd(self):
+        return super().isEnd()
+
+    def free(self):
+        return super().free()
+
+    def write(self, fn, value):
+        if self.fn1 == fn:
+            self.src1 = value
+            self.fn1 = ""
+            self.time = cycle_store
 
 
 Instructions = []
 Registers = []
-Reservations = []
+ReservationADDs = []
+ReservationMULs = []
 LoadBuffers = []
 StoreBuffers = []
 cycle = 0 # cycle number of the simulation
 pc = 0 # program counter
-
+memory_index = 0 # load result index,only use in loadBuffer.getResult
 
 def init():
-    global Instructions, Registers, Reservations, LoadBuffers, StoreBuffers, cycle, pc
+    global Instructions, Registers, ReservationADDs, ReservationMULs, LoadBuffers, StoreBuffers, cycle, pc, memory_index
 
     Instructions.clear()
     Registers.clear()
-    Reservations.clear()
+    ReservationADDs.clear()
+    ReservationMULs.clear()
     LoadBuffers.clear()
     StoreBuffers.clear()
 
     cycle = 0
     pc = 0
+    memory_index = 0
 
-    file = open("input1.txt", "r")
+    file = open(INPUT_FILE, "r")
     data = file.readlines()
     file.close()
     for i in data:
@@ -128,13 +289,13 @@ def init():
         Instructions.append(Instruction(op, dest, src1, src2))
 
     for i in range(32):
-        Registers.append(Register("R" + str(i)))
+        Registers.append(Register("F" + str(i)))
     
     for i in range(num_add):
-        Reservations.append(Reservation("Add" + str(i + 1)))
+        ReservationADDs.append(ReservationADD("Add" + str(i + 1)))
     
     for i in range(num_mul):
-        Reservations.append(Reservation("Mult" + str(i + 1)))
+        ReservationMULs.append(ReservationMUL("Mult" + str(i + 1)))
 
     for i in range(num_load):
         LoadBuffers.append(LoadBuffer("Load" + str(i + 1)))
@@ -144,154 +305,77 @@ def init():
 
 
 def print_state():
-    # print instruction status, reservation station status, load buffer status, register status
-    state_str = "Cycle " + str(cycle) + "\n" + "\n"
+    # print the state of the simulation
+    state_str = "Cycle_" + str(cycle) + "\n"
 
-    state_str += "Instruction Status\n"
-    state_str += "Operation Destination Source1 Source2 Issue Execute Writeback\n"
-    for i in Instructions:
-        state_str += i.op + " " + i.dest + " " + i.src1 + " " + i.src2 + " " 
-        if(i.issue == -1):
-            state_str += "  "
+    for i in range(len(LoadBuffers)):
+        if(LoadBuffers[i].busy):
+            state_str += "Load" + str(i + 1) + ": Yes, " + LoadBuffers[i].src1 + ";" + "\n"
         else:
-            state_str += str(i.issue)
-        state_str += " "
-        if(i.write == -1):
-            state_str += "  "
-        else:
-            state_str +=  str(i.write - 1) + " " + str(i.write)
-            # the execute complished time is writeback time - 1
-        state_str += "\n"
+            state_str += "Load" + str(i + 1) + ": No" + ";" + "\n"
+        
 
-    state_str += "\n" + "Reservation Station Status\n"
-    state_str += "Time Name Busy Operation Vj Qj Vk Qk\n"
-    for r in Reservations:
-        if(r. time == 9999):
-            state_str += "  "
+    for i in range(len(StoreBuffers)):
+        if(StoreBuffers[i].busy):
+            state_str += "Store" + str(i + 1) + ": Yes, " + StoreBuffers[i].dest
+            if(StoreBuffers[i].fn1):
+                state_str +=  ", " + StoreBuffers[i].fn1 + ";" + "\n"
+            else:
+                state_str +=  ", " + "NULL" + ";" + "\n"
         else:
-            state_str += str(r.time)
-        if(r.busy):
-            state_str += " " + r.name + " " + "Yes" + " " + r.op + " " + str(r.vj) + " " + r.qj + " " + str(r.vk) + " " + r.qk + "\n"
-        else:
-            state_str += " " + r.name + " " + "No" + "\n"
+            state_str += "Store" + str(i + 1) + ": No"+ ";"+ "\n"
 
-    state_str += "\n" + "Load Buffer Status\n"
-    state_str += "Name Busy Address\n"
-    for l in LoadBuffers:
-        if(l.busy):
-            state_str += l.name + " " + "Yes" + " " + l.address + "\n"
-        else:
-            state_str += l.name + " " + "No" + "\n"
+    for i in range(len(ReservationADDs)):
+        if(ReservationADDs[i].busy):
+            state_str += "Add" + str(i + 1) + ": Yes, " + ReservationADDs[i].op 
+            if(ReservationADDs[i].fn1):
+                state_str +=  ", " + ReservationADDs[i].fn1
+            else:
+                state_str +=  ", " + ReservationADDs[i].src1
+            if(ReservationADDs[i].fn2):
+                state_str +=  ", " + ReservationADDs[i].fn2
+            else:
+                state_str +=  ", " + ReservationADDs[i].src2
+            state_str += ";" + "\n"
 
-    state_str += "\n" + "Register Status\n"
-    state_str += "Name Value FunctionUnit\n"
-    for r in Registers:
-        state_str += r.name 
-        if(r.busy):
-            state_str += " " + r.value + " " + r.fu + "\n"
         else:
-            state_str += " " + r.value + "\n"
+            state_str += "Add" + str(i + 1) + ": No" + ";\n"
+
+    for i in range(len(ReservationMULs)):
+        if(ReservationMULs[i].busy):
+            state_str += "Mult" + str(i + 1) + ": Yes, " + ReservationMULs[i].op 
+            if(ReservationMULs[i].fn1):
+                state_str +=  ", " + ReservationMULs[i].fn1
+            else:
+                state_str +=  ", " + ReservationMULs[i].src1
+            if(ReservationMULs[i].fn2):
+                state_str +=  ", " + ReservationMULs[i].fn2
+            else:
+                state_str +=  ", " + ReservationMULs[i].src2
+            state_str += ";\n"
+        else:
+            state_str += "Mult" + str(i + 1) + ": No" + ";\n"
+
+    for i in range(len(Registers)):
+        state_str += "F" + str(i) + ": "
+        if(Registers[i].fu):
+            state_str += Registers[i].fn + "; "
+        else:
+            state_str += str(Registers[i].value) + "; "
+
+    state_str += "\n"
     print(state_str)
-
-def write_back():
-    global Instructions, Registers, Reservations, LoadBuffers, StoreBuffers, cycle, pc
-
-    for r in Reservations:
-        if(r.busy and r.time == 0):
-            # r.dest gets the result
-            # write back to the destination register
-            for reg in Registers:
-                if(reg.name == r.dest):
-                    if(Instructions[r.instruction].op == "ADDD"):
-                        reg.value = r.vj + "+" + r.vk
-                    elif(Instructions[r.instruction].op == "SUBD"):
-                        reg.value = r.vj + "-" + r.vk
-                    elif(Instructions[r.instruction].op == "MULTD"):
-                        reg.value = r.vj + "*" + r.vk
-                    elif(Instructions[r.instruction].op == "DIVD"):
-                        reg.value = r.vj + "/" + r.vk
-                    reg.fu = ""
-                    break
-            # write back the source register in reservation station
-            for reg in Registers:
-                if(reg.qj == r.name):
-                    reg.qj = ""
-                    reg.vj = r.dest
-                if(reg.qk == r.name):
-                    reg.qk = ""
-                    reg.vk = r.dest
-                # if both sourse registers ready
-                if(reg.qj == "" and reg.qk == ""):
-                    # judge the operation type and set the remain time
-                    if(Instructions[r.instruction].op == "ADDD"):
-                        r.time = cycle_add
-                        Instructions[r.instruction].write = cycle + cycle_add + 1
-                    elif(Instructions[r.instruction].op == "SUBD"):
-                        r.time = cycle_sub
-                        Instructions[r.instruction].write = cycle + cycle_sub + 1
-                    elif(Instructions[r.instruction].op == "MULTD"):
-                        r.time = cycle_mul
-                        Instructions[r.instruction].write = cycle + cycle_mul + 1
-                    elif(Instructions[r.instruction].op == "DIVD"):
-                        r.time = cycle_div
-                        Instructions[r.instruction].write = cycle + cycle_div + 1
-            # we suppose that load and store will get the needed data immediately
-            # so we do not write back to store and load buffer
-
-            r.free()
-
-def issueInReservation(op):
-    # op is "ADDD" or "SUBD"or "MULTD"or "DIVD"
-    global Instructions, Registers, Reservations, LoadBuffers, StoreBuffers, cycle, pc
-    # check if there is a free reservation station
-    set = -1
-    if(op == "ADDD" or op == "SUBD"):
-        for i in range(num_add):
-            if(Reservations[i].busy == False):
-                set = i
-                break
-    elif(op == "MULTD" or op == "DIVD"):
-        for i in range(num_add, num_add + num_mul):
-            if(Reservations[i].busy == False):
-                set = i
-                break
-    if(set == -1):
-        # there is no free reservation station, wait for next cycle
-        return False
-    # add the instruction to the reservation station
-    Reservations[set].busy = True
-    Reservations[set].op = op
-    Reservations[set].instruction = pc
-    Reservations[set].dest = Instructions[pc].dest
-    Instructions[pc].issue = cycle
-    Registers[int(Instructions[pc].dest[1:])].fu = Reservations[set].name
-    # check if the source registers are ready
-    # to get the index quickly, we use the name of the register as the index
-    index = int(Instructions[pc].src1[1:])
-    if(Registers[index].qj == ""):
-        Reservations[set].vj = Registers[index].value
-    else:
-        Reservations[set].qj = Registers[index].qj
-    index = int(Instructions[pc].src2[1:])
-    if(Registers[index].qj == ""):
-        Reservations[set].vk = Registers[index].value
-    else:
-        Reservations[set].qk = Registers[index].qj
-    # if both sourse registers ready
-    if(Reservations[set].qj == "" and Reservations[set].qk == ""):
-        Reservation[set].time = cycle_add
-        # Instructions[pc].exec = cycle + cycle_add
-        Instructions[pc].write = cycle + cycle_add + 1
 
 
 def issue():
-    global Instructions, Registers, Reservations, LoadBuffers, StoreBuffers, cycle, pc
+    global Instructions, Registers, ReservationADDs, ReservationMULs, LoadBuffers, StoreBuffers, cycle, pc, memory_index
 
     if(pc < len(Instructions)):
         # judge the operation type and set the time
         op = Instructions[pc].op
         if(Instructions[pc].op == "ADDD" or Instructions[pc].op == "SUBD"):
-            issueInReservation(op)
+            
+            
         elif(Instructions[pc].op == "MULTD" or Instructions[pc].op == "DIVD"):
             issueInReservation(op)
         elif(Instructions[pc].op == "LD"):
@@ -335,8 +419,82 @@ def issue():
             Instructions[pc].issue = cycle
             Instructions[pc].write = cycle + cycle_store + 1
             
+
+
+def write_back():
+    global Instructions, Registers, Reservations, LoadBuffers, StoreBuffers, cycle, pc, memory_index
+
+    for r in range(len(Reservations)):
+        if(Reservations[r].busy and Reservations[r].time == 0):
+            f = 0
+            # write back to the destination
+
+    for r in Reservations:
+        if(r.busy and r.time == 0):
+            # r.dest gets the result
+            # write back to the destination register
+            for i in range(len(Instructions)):
+                break  
+            for reg in Registers:
+                if(reg.name == r.dest):
+                    if(Instructions[r.instruction].op == "ADDD"):
+                        reg.value = r.vj + "+" + r.vk
+                    elif(Instructions[r.instruction].op == "SUBD"):
+                        reg.value = r.vj + "-" + r.vk
+                    elif(Instructions[r.instruction].op == "MULTD"):
+                        reg.value = r.vj + "*" + r.vk
+                    elif(Instructions[r.instruction].op == "DIVD"):
+                        reg.value = r.vj + "/" + r.vk
+                    reg.fu = ""
+                    break
+            # write back the source register in reservation station
+            for reg in Registers:
+                if(reg.qj == r.name):
+                    reg.qj = ""
+                    reg.vj = r.dest
+                if(reg.qk == r.name):
+                    reg.qk = ""
+                    reg.vk = r.dest
+                # if both sourse registers ready
+                if(reg.qj == "" and reg.qk == ""):
+                    # judge the operation type and set the remain time
+                    if(Instructions[r.instruction].op == "ADDD"):
+                        r.time = cycle_add
+                        Instructions[r.instruction].write = cycle + cycle_add + 1
+                    elif(Instructions[r.instruction].op == "SUBD"):
+                        r.time = cycle_sub
+                        Instructions[r.instruction].write = cycle + cycle_sub + 1
+                    elif(Instructions[r.instruction].op == "MULTD"):
+                        r.time = cycle_mul
+                        Instructions[r.instruction].write = cycle + cycle_mul + 1
+                    elif(Instructions[r.instruction].op == "DIVD"):
+                        r.time = cycle_div
+                        Instructions[r.instruction].write = cycle + cycle_div + 1
+            # we suppose that load and store will get the needed data immediately
+            # so we do not write back to store and load buffer
+
+            r.free()
+
+
+
              
-                    
+def execute():
+    pass
+
+def isAllFree():
+    for i in range(num_add):
+        if(Reservations[i].busy == True):
+            return False
+    for i in range(num_mul):
+        if(Reservations[i + num_add].busy == True):
+            return False    
+    for i in range(num_load):
+        if(LoadBuffers[i].busy == True):
+            return False
+    for i in range(num_store):
+        if(StoreBuffers[i].busy == True):
+            return False
+    return True
 
 
 def tomasulo():
@@ -344,10 +502,24 @@ def tomasulo():
     init()
     print_state()
     while(pc < len(Instructions)):
-        # write back the ready operands finished in last cycle
+        cycle += 1
         write_back()
-        # issue the a instruction
         issue()
+        execute()
+        print_state()
+    
+    while not(isAllFree()):
+        write_back()
+        execute()
+        print_state()
+        cycle += 1
+    
+    # print the result
+
+
+
+
+    
 
 
 
