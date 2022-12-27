@@ -12,7 +12,7 @@ import time
 
 # define the parameters
 INPUT_FILE = "input1.txt"
-
+OUTPUT_FILE = "output1.txt"
 
 cycle_load = 2 
 cycle_store = 2 
@@ -63,6 +63,8 @@ class Instruction:
     def setWriteTime(self, cycle):
         self.writeTime = cycle
 
+    def toString(self):
+        return self.op + " " + self.dest + " " + self.src1 + " " + self.src2
 
 class Register:
     def __init__(self, name):
@@ -251,7 +253,7 @@ class LoadBuffer(Reservation):
         self.type = "LOAD"
 
     def occupy(self, src1, instruction):
-        super().occupy("LOAD", "", "", src1, "", instruction)
+        super().occupy("LD", "", "", src1, "", instruction)
         self.time = cycle_load
 
     def getResult(self, index):
@@ -292,7 +294,7 @@ class StoreBuffer(Reservation):
 
     def occupy(self, src, fn, dest, instruction):
         self.dest = dest
-        super().occupy("STORE", fn, "", src, "", instruction)
+        super().occupy("SD", fn, "", src, "", instruction)
         if fn == "":
             self.time = cycle_store
 
@@ -436,6 +438,10 @@ def print_state():
 
     state_str += "\n"
     print(state_str)
+    file = open(OUTPUT_FILE, "a")
+    file.write(state_str)
+    file.write("\n")
+    file.close()
 
 
 def issue():
@@ -643,15 +649,17 @@ def write_back():
                     Instructions[ReservationMULs[i].instruction].setWriteTime(cycle + getExecuteTime(ReservationMULs[i].op) +  cycle_writeback)
 
     # update the store
-    for i in range(len(StoreBuffers)):
-        for j in range(len(update)):
+    for j in range(len(update)):
+        for i in range(len(StoreBuffers)):
             # if not(StoreBuffers[i].isAvailble()):
             if(StoreBuffers[i].isBusy() and StoreBuffers[i].fn1 != ""):
                 StoreBuffers[i].write(update[j][0], update[j][1])
                 if(StoreBuffers[i].fn1 == ""):
-                    StoreBuffers[i].time = getExecuteTime(StoreBuffers[i]) + cycle_writeback
+                    StoreBuffers[i].time = getExecuteTime(StoreBuffers[i].op) + cycle_writeback
+                    # print("========================store time:", StoreBuffers[i].time)
+                    # print("========================store op:", StoreBuffers[i].op)
                     # update the instruction
-                    Instructions[StoreBuffers[i].instruction].setWriteTime(cycle + getExecuteTime(StoreBuffers[i]) +  cycle_writeback)
+                    Instructions[StoreBuffers[i].instruction].setWriteTime(cycle + getExecuteTime(StoreBuffers[i].op) +  cycle_writeback)
 
 
 def execute():
@@ -710,9 +718,13 @@ def tomasulo():
         
     
     # print the result
+    res = ""
     for i in range(len(Instructions)):
-        print("Instruction", i, ":", Instructions[i].op, " ", Instructions[i].issueTime, " ", Instructions[i].writeTime)
-    
+        res += "Instruction " + str(i) + " : " + Instructions[i].toString() + " || " + str(Instructions[i].issueTime) + ", " + str(Instructions[i].writeTime - 1) + ", " + str(Instructions[i].writeTime) + "\n"
+    print(res)
+    file = open(OUTPUT_FILE, "a")
+    file.write(res)
+    file.close()
 
 
 if __name__ == "__main__":
