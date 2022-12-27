@@ -20,7 +20,6 @@ cycle_store = 2
 cycle_issue = 1
 cycle_writeback = 1
 
-# cycle_execution for each instruction
 cycle_add = 2
 cycle_sub = 2
 cycle_mul = 10
@@ -194,9 +193,9 @@ class ReservationADD(Reservation):
 
     def getResult(self):
         if(self.op == "ADDD"):
-            return self.src1 + "+" + self.src2
+            return self.src1 + " + " + self.src2
         else:
-            return self.src1 + "-" + self.src2
+            return self.src1 + " - " + self.src2
 
 class ReservationMUL(Reservation):
     def __init__(self, name):
@@ -235,10 +234,18 @@ class ReservationMUL(Reservation):
         super().write(fn, value)
 
     def getResult(self):
-        if(self.op == "MULTD"):
-            return self.src1 + "*" + self.src2
+        if(self.src1.find("/") != -1):
+            src1 = "(" + self.src1 + ")"
         else:
-            return self.src1 + "/" + self.src2
+            src1 = self.src1
+        if(self.src2.find("/") != -1):
+            src2 = "(" + self.src2 + ")"
+        else:
+            src2 = self.src2
+        if(self.op == "MULTD"):
+            return src1 + " * " + src2
+        else:
+            return src1 + " / " + src2
 
 
 class LoadBuffer(Reservation):
@@ -391,7 +398,7 @@ def print_state():
             if(StoreBuffers[i].fn1):
                 state_str +=  ", " + StoreBuffers[i].fn1 + ";" + "\n"
             else:
-                state_str +=  ", " + "NULL" + ";" + "\n"
+                state_str +=  ", " + StoreBuffers[i].src1 + ";" + "\n"
         else:
             state_str += "Store" + str(i + 1) + ": No"+ ";"+ "\n"
 
